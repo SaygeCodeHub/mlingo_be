@@ -6,7 +6,7 @@ from fastapi import Depends
 from app.infrastructure.database import engine, get_db
 from app.v1.application.dto.dto_classes import ResponseDTO
 from app.v1.application.service.language_service import add_translation, fetch_language_keys, \
-    fetch_all_translation
+    fetch_all_translation, update_translation
 from app.v1.domain import models, schema
 
 router = APIRouter()
@@ -17,10 +17,12 @@ models.Base.metadata.create_all(bind=engine)
 
 @router.post("/v1/addTranslation")
 def new_translation(addTranslation: schema.Translate, db=Depends(get_db)):
-    try:
-        return add_translation(addTranslation, db)
-    except Exception as e:
-        ResponseDTO(204, f"{str(e)}", {})
+    return add_translation(addTranslation, db)
+
+
+@router.put("/v1/updateTranslation")
+def edit_translation(editTranslation: schema.Translate, db=Depends(get_db)):
+    return update_translation(editTranslation, db)
 
 
 @router.get("/v1/getAllTranslations")

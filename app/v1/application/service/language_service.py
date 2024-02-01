@@ -5,6 +5,7 @@ from fastapi import Depends
 from app.infrastructure.database import get_db
 from app.v1.application.dto.dto_classes import ResponseDTO
 from app.v1.domain import models, schema
+from app.v1.domain.models import ActivityStatus
 
 
 def add_language(languageName: str, db=Depends(get_db)):
@@ -21,12 +22,12 @@ def add_language(languageName: str, db=Depends(get_db)):
         return new_language.language_id
 
 
-def add_key(addKeys: schema.Translate, db=Depends(get_db)):
-    key = db.query(models.Key).filter(models.Key.key == addKeys.key).first()
+def add_key(addkey: str, status: ActivityStatus, db=Depends(get_db)):
+    key = db.query(models.Key).filter(models.Key.key == addkey).first()
     if key:
         return key.key_id
     else:
-        new_key = models.Key(key=addKeys.key, status=addKeys.status)
+        new_key = models.Key(key=addkey, status=status)
 
         db.add(new_key)
         db.commit()
@@ -36,21 +37,50 @@ def add_key(addKeys: schema.Translate, db=Depends(get_db)):
 
 
 def add_translation(addTranslation: schema.Translate, db=Depends(get_db)):
-    addTranslation.language_id = add_language(addTranslation.language, db)
-    addTranslation.key_id = add_key(addTranslation, db)
-    translation = db.query(models.Translation).filter(models.Translation.key_id == addTranslation.key_id,
-                                                      models.Translation.language_id == addTranslation.language_id).first()
-    if translation:
-        return ResponseDTO(204, "Translation already exists", {})
-    else:
-        new_translation = models.Translation(key_id=addTranslation.key_id, language_id=addTranslation.language_id,
-                                             translation=addTranslation.translation)
+    try:
+        addTranslation.key_id = add_key(addTranslation.key, addTranslation.status, db)
 
-        db.add(new_translation)
+        for translation in addTranslation.translations:
+            translation.language_id = add_language(translation.language, db)
+
+            translation_id = db.query(models.Translation).filter(
+                models.Translation.key_id == addTranslation.key_id,
+                models.Translation.language_id == translation.language_id).first()
+            if not translation_id:
+                new_translation = models.Translation(key_id=addTranslation.key_id,
+                                                     language_id=translation.language_id,
+                                                     translation=translation.translation)
+
+                db.add(new_translation)
+
         db.commit()
-        db.refresh(new_translation)
-
         return ResponseDTO(200, "Translation Added successfully", {})
+    except Exception as e:
+        db.rollback()
+        return ResponseDTO(204, f"{str(e)}", {})
+
+
+def update_translation(editTranslation: schema.Translate, db=Depends(get_db)):
+    try:
+        if not editTranslation.key_id:
+            editTranslation.key_id = add_key(editTranslation.key, editTranslation.status, db)
+
+        for translation in editTranslation.translations:
+            if not translation.language_id:
+                translation.language_id = add_language(translation.language, db)
+
+            translated = db.query(models.Translation).filter(
+                models.Translation.key_id == editTranslation.key_id,
+                models.Translation.language_id == translation.language_id)
+            translation_exist = translated.first()
+            if translation_exist:
+                translated.update({"translation": translation.translation})
+
+        db.commit()
+        return ResponseDTO(200, "Translation Edited successfully", {})
+    except Exception as e:
+        db.rollback()
+        return ResponseDTO(204, f"{str(e)}", {})
 
 
 def fetch_translation(keyId: int, languageId: int, db=Depends(get_db)):
@@ -74,12 +104,12 @@ def fetch_language_keys(languageId: int, db=Depends(get_db)):
 
 
 def fetch_all_translation(db=Depends(get_db)):
-    translations = (db.query(models.Translation, models.Language, models.Key)
-                    .all())
     available_languages = db.query(models.Language).all()
+    available_keys = db.query(models.Key).all()
 
     formatted_translations = {}
-    for translation, language, key in translations:
+
+    for key in available_keys:
         key_id = key.key_id
         if key_id not in formatted_translations:
             formatted_translations[key_id] = {
